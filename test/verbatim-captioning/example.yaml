@@ -6,5 +6,5 @@ filters:
   - verbatim-captioning.lua
 standalone: true
 verbosity: INFO
-highlight-style: ${USERDATA}/syntax-highlighting/data/themes/github-light.theme
-syntax-definition: ${USERDATA}/syntax-highlighting/data/syntax/lua.xml
+highlight-style: ${USERDATA}/themes/github-light.theme
+syntax-definition: ${USERDATA}/syntax/lua.xml

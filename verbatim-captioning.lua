@@ -29,13 +29,10 @@ end
 local function CodeBlock(elem)
     if PANDOC_WRITER_OPTIONS.listings and not FORMAT:match 'latex' then return nil end
     if not elem.attributes['caption'] then return nil end
-    new = pandoc.RawBlock('tex','\\begin{coding}\n'
-            .. pandoc.write ( pandoc.Pandoc({elem}),'latex' )
-            .. '\\caption{'.. elem.attributes['caption'] ..'}\n'
-            .. '\\end{coding}')
-    elem.text=""
-    reduce_spacing = pandoc.RawBlock('tex','\\vspace*{-2\\baselineskip}')
-    return {new,elem,reduce_spacing}
+    return {pandoc.RawBlock('tex','\\begin{coding}\n'),
+            elem,
+            pandoc.RawBlock('tex', '\\caption{'.. elem.attributes['caption'] ..'}\n'
+                    .. '\\end{coding}')}
 end
 
 return {{Meta = Meta},{CodeBlock=CodeBlock}}

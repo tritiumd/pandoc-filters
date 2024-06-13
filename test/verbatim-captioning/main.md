@@ -1,5 +1,5 @@
 ---
-documentclass: scrbook
+documentclass: article
 monofont: JetBrainsMono
 monofontoptions:
   - Path = /usr/share/fonts/jetbrains-mono/
