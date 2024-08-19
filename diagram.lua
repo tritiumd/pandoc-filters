@@ -132,7 +132,7 @@ local mermaid = {
         write_file(infile, code)
         pandoc.pipe(
           self.execpath or 'mmdc',
-          {"--pdfFit", "--input", infile, "--output", outfile, "-p", "/pandoc/puppeteer-config.json"},
+          {"--pdfFit", "--input", infile, "--output", outfile, "-p", os.getenv 'MERMAID_CONF'},
           ''
         )
         return read_file(outfile), mime_type
