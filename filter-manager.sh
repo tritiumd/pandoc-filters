@@ -11,7 +11,7 @@ function downloadFilterPandocExt() {
 }
 
 # Install pandoc lua filter
-downloadFilterPandocExt diagram v1 $redownload
+downloadFilterPandocExt diagram v1.1.0 $redownload
 downloadFilterPandocExt multibib dd7de577e8e9ebb58f13edc3f7615141552b02c5 $redownload
 downloadFilterPandocExt multibib main $redownload
 

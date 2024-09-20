@@ -1,18 +1,26 @@
 --[[
-diagram-generator – create images and figures from code blocks.
+diagram – create images and figures from code blocks.
 
 See copyright notice in file LICENSE.
 ]]
--- Module pandoc.system is required and was added in version 2.7.3
+-- The filter uses the Figure AST element, which was added in pandoc 3.
 PANDOC_VERSION:must_be_at_least '3.0'
 
--- Report Lua warnings to stderr
-if warn then
+local version = pandoc.types.Version '1.1.0'
+
+-- Report Lua warnings to stderr if the `warn` function is not plugged into
+-- pandoc's logging system.
+if not warn then
+  -- fallback
+  warn = function(...) io.stderr:write(table.concat({ ... })) end
+elseif PANDOC_VERSION < '3.1.4' then
+  -- starting with pandoc 3.1.4, warnings are reported to pandoc's logging
+  -- system, so no need to print warnings to stderr.
   warn '@on'
-else
-  warn = function (...) io.stderr:write(string.concat({...})) end
 end
 
+local io = require 'io'
+local pandoc = require 'pandoc'
 local system = require 'pandoc.system'
 local utils = require 'pandoc.utils'
 local stringify = utils.stringify
@@ -144,9 +152,7 @@ local mermaid = {
 --- TikZ
 --
 
---- LaTeX template used to compile TikZ images. Takes additional
---- packages as the first, and the actual TikZ code as the second
---- argument.
+--- LaTeX template used to compile TikZ images.
 local tikz_template = pandoc.template.compile [[
 \documentclass{standalone}
 \usepackage{tikz}
@@ -192,12 +198,20 @@ local tikz = {
         write_file(tikz_file, tex_code)
 
         -- Execute the LaTeX compiler:
-        pandoc.pipe(
+        local success, result = pcall(
+          pandoc.pipe,
           self.execpath or 'pdflatex',
-          {'-output-directory', tmpdir, tikz_file},
+          { '-interaction=nonstopmode', '-output-directory', tmpdir, tikz_file },
           ''
         )
-
+        if not success then
+          warn(string.format(
+                 "The call\n%s\nfailed with error code %s. Output:\n%s",
+                 result.command,
+                 result.error_code,
+                 result.output
+          ))
+        end
         return read_file(pdf_file), 'application/pdf'
       end)
     end)
@@ -237,9 +251,15 @@ local default_engines = {
 --- Options for the output format of the given name.
 local function format_options (name)
   local pdf2svg = name ~= 'latex' and name ~= 'context'
-  local preferred_mime_types = pandoc.List{'application/pdf', 'image/png'}
-  -- Prefer SVG for non-PDF output formats
-  if pdf2svg then
+  local is_office_format = name == 'docx' or name == 'odt'
+  -- Office formats seem to work better with PNG than with SVG.
+  local preferred_mime_types = is_office_format
+    and pandoc.List{'image/png', 'application/pdf'}
+    or  pandoc.List{'application/pdf', 'image/png'}
+  -- Prefer SVG for non-PDF output formats, except for Office formats
+  if is_office_format then
+    preferred_mime_types:insert('image/svg+xml')
+  elseif pdf2svg then
     preferred_mime_types:insert(1, 'image/svg+xml')
   end
   return {
@@ -370,37 +390,51 @@ local function diagram_options (cb, comment_start)
     attribs[key] = value
   end
 
-  -- Read caption attribute as Markdown
-  local caption = attribs.caption
-    and pandoc.read(attribs.caption).blocks
-    or nil
-  local fig_attr = {
-    id = cb.identifier ~= '' and cb.identifier or attribs.label,
-    name = attribs.name,
-  }
+  local alt
+  local caption
+  local fig_attr = {id = cb.identifier}
+  local filename
+  local image_attr = {}
   local user_opt = {}
 
-  for k, v in pairs(attribs) do
-    local prefix, key = k:match '^(%a+)%-(%a[-%w]*)$'
-    if prefix == 'fig' then
-      fig_attr[key] = v
-    elseif prefix == 'opt' then
-      user_opt[key] = v
+  for attr_name, value in pairs(attribs) do
+    if attr_name == 'alt' then
+      alt = value
+    elseif attr_name == 'caption' then
+      -- Read caption attribute as Markdown
+      caption = attribs.caption
+        and pandoc.read(attribs.caption).blocks
+        or nil
+    elseif attr_name == 'filename' then
+      filename = value
+    elseif attr_name == 'label' then
+      fig_attr.id = value
+    elseif attr_name == 'name' then
+      fig_attr.name = value
+    else
+      -- Check for prefixed attributes
+      local prefix, key = attr_name:match '^(%a+)%-(%a[-%w]*)$'
+      if prefix == 'fig' then
+        fig_attr[key] = value
+      elseif prefix == 'image' or prefix == 'img' then
+        image_attr[key] = value
+      elseif prefix == 'opt' then
+        user_opt[key] = value
+      else
+        -- Use as image attribute
+        image_attr[attr_name] = value
+      end
     end
   end
 
   return {
-    ['alt'] = attribs.alt or
+    ['alt'] = alt or
       (caption and pandoc.utils.blocks_to_inlines(caption)) or
       {},
     ['caption'] = caption,
     ['fig-attr'] = fig_attr,
-    ['filename'] = attribs.filename,
-    ['image-attr'] = {
-      height = attribs.height,
-      width = attribs.width,
-      style = attribs.style,
-    },
+    ['filename'] = filename,
+    ['image-attr'] = image_attr,
     ['opt'] = user_opt,
   }
 end
@@ -516,9 +550,15 @@ local function code_to_figure (conf)
   end
 end
 
-function Pandoc (doc)
-  local conf = configure(doc.meta, FORMAT)
-  return doc:walk {
-    CodeBlock = code_to_figure(conf),
+return {
+  version = version,
+
+  {
+    Pandoc = function (doc)
+      local conf = configure(doc.meta, FORMAT)
+      return doc:walk {
+        CodeBlock = code_to_figure(conf),
+      }
+    end
   }
-end
+}
