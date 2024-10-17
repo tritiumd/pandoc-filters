@@ -6,7 +6,7 @@ See copyright notice in file LICENSE.
 -- The filter uses the Figure AST element, which was added in pandoc 3.
 PANDOC_VERSION:must_be_at_least '3.0'
 
-local version = pandoc.types.Version '1.1.0'
+local version = pandoc.types.Version '1.2.0'
 
 -- Report Lua warnings to stderr if the `warn` function is not plugged into
 -- pandoc's logging system.
@@ -22,7 +22,8 @@ end
 local io = require 'io'
 local pandoc = require 'pandoc'
 local system = require 'pandoc.system'
-local utils = require 'pandoc.utils'
+local utils  = require 'pandoc.utils'
+local List   = require 'pandoc.List'
 local stringify = utils.stringify
 local with_temporary_directory = system.with_temporary_directory
 local with_working_directory = system.with_working_directory
@@ -90,6 +91,23 @@ local function write_file (filepath, content)
   fh:close()
 end
 
+--- Like `pandoc.pipe`, but allows "multi word" paths:
+-- Supplying a list as the first argument will use the first element as
+-- the executable path and prepend the remaining elements to the list of
+-- arguments.
+local function pipe (command, args, input)
+  local cmd
+  if pandoc.utils.type(command) == 'List' then
+    command = command:map(stringify)
+    cmd = command:remove(1)
+    args = command .. args
+  else
+    cmd = stringify(command)
+  end
+  return pandoc.pipe(cmd, args, input)
+end
+
+
 --
 -- Diagram Engines
 --
@@ -106,7 +124,7 @@ local plantuml = {
       format, mime_type = 'svg', 'image/svg+xml'
     end
     local args = {'-t' .. format, "-pipe", "-charset", "UTF8"}
-    return pandoc.pipe(self.execpath or 'plantuml', args, puml), mime_type
+    return pipe(self.execpath or 'plantuml', args, puml), mime_type
   end,
 }
 
@@ -122,7 +140,7 @@ local graphviz = {
     if not format then
       format, mime_type = 'svg', 'image/svg+xml'
     end
-    return pandoc.pipe(self.execpath or 'dot', {"-T"..format}, code), mime_type
+    return pipe(self.execpath or 'dot', {"-T"..format}, code), mime_type
   end,
 }
 
@@ -137,12 +155,27 @@ local mermaid = {
       return with_working_directory(tmpdir, function ()
         local infile = 'diagram.mmd'
         local outfile = 'diagram.' .. file_extension
+        local args = {"--pdfFit", "--input", infile, "--output", outfile}
+        if self.opt then
+          if self.opt.theme then
+            table.insert(args, '--theme' .. stringify(self.opt.theme))
+            table.insert(args, stringify(self.opt.cssFile))
+          end
+          if self.opt.configFile then
+            table.insert(args, '--configFile')
+            table.insert(args, stringify(self.opt.configFile))
+          end
+          if self.opt.cssFile then
+            table.insert(args, '--cssFile' .. stringify(self.opt.cssFile))
+            table.insert(args, stringify(self.opt.cssFile))
+          end
+          if self.opt.puppeteerConfigFile then
+            table.insert(args, '--puppeteerConfigFile')
+            table.insert(args, stringify(self.opt.puppeteerConfigFile))
+          end
+        end
         write_file(infile, code)
-        pandoc.pipe(
-          self.execpath or 'mmdc',
-          {"--pdfFit", "--input", infile, "--output", outfile, "-p", os.getenv 'MERMAID_CONF'},
-          ''
-        )
+        pipe(self.execpath or 'mmdc', args,'')
         return read_file(outfile), mime_type
       end)
     end)
@@ -199,7 +232,7 @@ local tikz = {
 
         -- Execute the LaTeX compiler:
         local success, result = pcall(
-          pandoc.pipe,
+          pipe,
           self.execpath or 'pdflatex',
           { '-interaction=nonstopmode', '-output-directory', tmpdir, tikz_file },
           ''
@@ -229,8 +262,45 @@ local asymptote = {
       return with_working_directory(tmpdir, function ()
         local pdf_file = "pandoc_diagram.pdf"
         local args = {'-tex', 'pdflatex', "-o", "pandoc_diagram", '-'}
-        pandoc.pipe(self.execpath or 'asy', args, code)
+        pipe(self.execpath or 'asy', args, code)
         return read_file(pdf_file), 'application/pdf'
+      end)
+    end)
+  end,
+}
+
+--- Cetz diagram engine
+local cetz = {
+  line_comment_start = '%%',
+  mime_types = mime_types_set{'jpg', 'pdf', 'png', 'svg'},
+  mime_type = 'image/svg+xml',
+  compile = function (self, code)
+    local mime_type = self.mime_type
+    local format = extension_for_mimetype[mime_type]
+    if not format then
+      format, mime_type = 'svg', 'image/svg+xml'
+    end
+    local preamble = [[
+#import "@preview/cetz:0.2.2"
+#set page(width: auto, height: auto, margin: .5cm)
+]]
+
+    local typst_code = preamble .. code
+
+    return with_temporary_directory("diagram", function (tmpdir)
+      return with_working_directory(tmpdir, function ()
+        local outfile = 'diagram.' .. format
+        local execpath = self.execpath
+        if not execpath and quarto and quarto.version >= '1.4' then
+          -- fall back to the Typst exec shipped with Quarto.
+          execpath = List{'quarto', 'typst'}
+        end
+        pipe(
+          execpath or 'typst',
+          {"compile", "-f", format, "-", outfile},
+          typst_code
+        )
+        return read_file(outfile), mime_type
       end)
     end)
   end,
@@ -242,6 +312,7 @@ local default_engines = {
   mermaid   = mermaid,
   plantuml  = plantuml,
   tikz      = tikz,
+  cetz      = cetz,
 }
 
 --
@@ -300,9 +371,7 @@ local function get_engine (name, engopts, format)
     return engine
   end
 
-  local execpath = engopts.execpath
-    and stringify(engopts.execpath)
-    or os.getenv(name:upper() .. '_BIN')
+  local execpath = engopts.execpath or os.getenv(name:upper() .. '_BIN')
 
   local mime_type = format:best_mime_type(
     engine.mime_types,
@@ -349,7 +418,6 @@ local function configure (meta, format_name)
     image_cache = image_cache,
   }
 end
-
 
 --
 -- Format conversion
@@ -550,15 +618,16 @@ local function code_to_figure (conf)
   end
 end
 
-return {
-  version = version,
-
-  {
+return setmetatable(
+  {{
     Pandoc = function (doc)
       local conf = configure(doc.meta, FORMAT)
       return doc:walk {
         CodeBlock = code_to_figure(conf),
       }
     end
+  }},
+  {
+    version = version,
   }
-}
+)
