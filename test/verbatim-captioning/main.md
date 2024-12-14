@@ -9,6 +9,8 @@ monofontoptions:
   - BoldFont       = *-Bold
   - BoldItalicFont = *-BoldItalic
 ---
+\listoflistings
+
 aaa
 
 ```{.python caption="hello world"}

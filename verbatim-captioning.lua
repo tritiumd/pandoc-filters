@@ -27,11 +27,14 @@ local function Meta(meta)
             end
         end
         includes = [[
-        \@ifpackageloaded{float}{}{\usepackage{float}}
-        \floatstyle{ruled}
-        \@ifundefined{c@chapter}{\newfloat{codelisting}{]]..placement..[[}{lop}}{\newfloat{codelisting}{]]..placement..[[}{lop}[chapter]}
-        \floatname{codelisting}{]]..name..[[}
-        \newcommand*\listoflistings{\listof{codelisting}{]]..listname..'}}'
+\makeatletter
+\@ifpackageloaded{float}{}{\usepackage{float}}
+\floatstyle{ruled}
+\@ifundefined{c@chapter}{\newfloat{codelisting}{]]..placement..[[}{lop}}{\newfloat{codelisting}{]]..placement..[[}{lop}[chapter]}
+\floatname{codelisting}{]]..name..[[}
+\newcommand*\listoflistings{\listof{codelisting}{]]..listname..[[}}
+\makeatother
+]]
         if meta['header-includes'] then
             table.insert(meta['header-includes'], pandoc.RawBlock('tex', includes))
         else
